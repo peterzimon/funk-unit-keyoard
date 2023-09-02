@@ -41,6 +41,11 @@
 // Pitch
 #define GP_PITCH 26
 #define PITCH_TRESHOLD 15
+#define PITCH_ZERO 8192
+#define PITCH_RESET_TRESHOLD 80 // 8192 means zero pitch bend, however the ADC
+                                // of the pico is _very_ inaccurate so if the
+                                // actual value gets in the bounds of this
+                                // treshold value then it resets to 8192.
 
 /**
  * MIDI processor
@@ -173,14 +178,22 @@ void transpose(bool up) {
  * Handling pitch bend
 */
 void set_pitch(uint16_t pitch) {
-    int shiftedValue = pitch << 1;
-    uint8_t msb = shiftedValue & 0xf0;
-    uint8_t lsb = (shiftedValue & 0x0f) >> 1;
+
+    int adj_pitch = pitch;
+    printf("pitch: %d\n", pitch);
+    printf("diff: %d\n", abs(pitch - PITCH_ZERO));
+
+    if (abs(pitch - PITCH_ZERO) <= PITCH_RESET_TRESHOLD) {
+        adj_pitch = PITCH_ZERO;
+    }
+
+    printf("adjusted pitch: %d\n", adj_pitch);
+    printf("---\n");
 
     if (uart_is_writable(UART_ID)) {
-        midi_buffer.write_byte(0xE0);
-        midi_buffer.write_byte(pitch & 0x7F);
-        midi_buffer.write_byte((pitch >> 7) & 0x7F);
+        uart_putc(UART_ID, 0xE0);
+        uart_putc(UART_ID, adj_pitch & 0x7F);
+        uart_putc(UART_ID, (adj_pitch >> 7) & 0x7F);
     }
 }
 
@@ -218,12 +231,13 @@ int main() {
         if (uart_is_readable(UART_ID)) {
             uint8_t data = uart_getc(UART_ID);
             midi_buffer.write_byte(data);
+        }
 
-            while (!midi_buffer.is_empty()) {
-                uint8_t byte = 0;
-                midi_buffer.read_byte(byte);
-                parse_midi(byte);
-            }
+        // Process incoming midi data
+        while (!midi_buffer.is_empty()) {
+            uint8_t byte = 0;
+            midi_buffer.read_byte(byte);
+            parse_midi(byte);
         }
 
         // Handle octave buttons
@@ -235,19 +249,13 @@ int main() {
             transpose(false);
         }
 
-        // Handle pitch bend
+        // Handle pitch bend hardware. Fucken MIDI keyboard didn't have one
         uint16_t pot_value = adc_read();
-        uint16_t pot_value_lores = pot_value >> 2;
+        uint16_t pot_value_lores = pot_value >> 3;
         if (abs(last_pitch_value - pot_value_lores) > PITCH_TRESHOLD) {
             last_pitch_value = pot_value_lores;
             uint16_t pitch = Utils::map(pot_value, 0, 4096, 0, 16383);
             set_pitch(pitch);
-
-            while (!midi_buffer.is_empty()) {
-                uint8_t byte = 0;
-                midi_buffer.read_byte(byte);
-                parse_midi(byte);
-            }
         }
     }
 
