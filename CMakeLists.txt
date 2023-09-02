@@ -22,4 +22,5 @@ target_link_libraries(${PROJECT_NAME}
                         hardware_adc
                         hardware_uart
                         ringbuffer
-                        ui_components)
+                        ui_components
+                        utils)

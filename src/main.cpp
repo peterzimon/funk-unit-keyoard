@@ -12,6 +12,7 @@
 #include "hardware/uart.h"
 #include <ringbuffer.h>
 #include <button.h>
+#include <utils.h>
 
 #define UART_ID uart1
 #define MIDI_BAUD_RATE 31250
@@ -20,7 +21,7 @@
 #define GP_BTN_OCTAVE_UP 4
 #define GP_BTN_OCTAVE_DOWN 5
 
-#define MIDI_BUFFER_SIZE 32
+#define MIDI_BUFFER_SIZE 128
 #define NOTES_ON_BUFFER_SIZE 128
 
 // High byte of status messages
@@ -36,6 +37,10 @@
 // Octave
 #define MAX_OCTAVES_UP 3
 #define MAX_OCTAVES_DOWN 3
+
+// Pitch
+#define GP_PITCH 26
+#define PITCH_TRESHOLD 15
 
 /**
  * MIDI processor
@@ -162,12 +167,28 @@ void transpose(bool up) {
             }
         }
     }
+}
 
+/**
+ * Handling pitch bend
+*/
+void set_pitch(uint16_t pitch) {
+    int shiftedValue = pitch << 1;
+    uint8_t msb = shiftedValue & 0xf0;
+    uint8_t lsb = (shiftedValue & 0x0f) >> 1;
+
+    if (uart_is_writable(UART_ID)) {
+        midi_buffer.write_byte(0xE0);
+        midi_buffer.write_byte(pitch & 0x7F);
+        midi_buffer.write_byte((pitch >> 7) & 0x7F);
+    }
 }
 
 /**
  * Main loop
 */
+int last_pitch_value = 0;
+
 int main() {
     // Use for debugging
     stdio_init_all();
@@ -188,9 +209,13 @@ int main() {
         notes_on[i] = false;
     }
 
+    // Init pitch bend input
+    adc_init();
+    adc_gpio_init(GP_PITCH);
+    adc_select_input(0);
+
     while (true) {
         if (uart_is_readable(UART_ID)) {
-
             uint8_t data = uart_getc(UART_ID);
             midi_buffer.write_byte(data);
 
@@ -208,6 +233,21 @@ int main() {
 
         if (btn_octave_down.is_released()) {
             transpose(false);
+        }
+
+        // Handle pitch bend
+        uint16_t pot_value = adc_read();
+        uint16_t pot_value_lores = pot_value >> 2;
+        if (abs(last_pitch_value - pot_value_lores) > PITCH_TRESHOLD) {
+            last_pitch_value = pot_value_lores;
+            uint16_t pitch = Utils::map(pot_value, 0, 4096, 0, 16383);
+            set_pitch(pitch);
+
+            while (!midi_buffer.is_empty()) {
+                uint8_t byte = 0;
+                midi_buffer.read_byte(byte);
+                parse_midi(byte);
+            }
         }
     }
 
