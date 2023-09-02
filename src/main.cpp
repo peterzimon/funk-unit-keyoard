@@ -20,6 +20,7 @@
 #define GP_MIDI_OUT 8
 #define GP_BTN_OCTAVE_UP 4
 #define GP_BTN_OCTAVE_DOWN 5
+#define GP_BTN_CHORDIFY 27
 
 #define MIDI_BUFFER_SIZE 128
 #define NOTES_ON_BUFFER_SIZE 128
@@ -206,9 +207,11 @@ void set_pitch(uint16_t pitch) {
  * Main loop
 */
 int last_pitch_value = 0;
-bool blinking = true;
+bool blinking = false;
 bool led_on = false;
 uint32_t millis = Utils::millis();
+
+Button btn_chordify = Button(GP_BTN_CHORDIFY);
 
 int main() {
     // Use for debugging
@@ -222,9 +225,10 @@ int main() {
     // Init buffer
     midi_buffer.init(buffer_var, MIDI_BUFFER_SIZE);
 
-    // Init octave buttons
+    // Init buttons
     btn_octave_up.init_gpio();
     btn_octave_down.init_gpio();
+    btn_chordify.init_gpio();
 
     for (int i = 0; i < NOTES_ON_BUFFER_SIZE; i++) {
         notes_on[i] = false;
@@ -268,6 +272,11 @@ int main() {
             last_pitch_value = pot_value_lores;
             uint16_t pitch = Utils::map(pot_value, 0, 4096, 0, 16383);
             set_pitch(pitch);
+        }
+
+        // Chordifier
+        if (btn_chordify.is_released()) {
+            blinking = !blinking;
         }
 
         if (blinking) {
