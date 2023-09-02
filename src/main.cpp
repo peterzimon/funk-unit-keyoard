@@ -11,12 +11,17 @@
 #include "pico/stdlib.h"
 #include "hardware/uart.h"
 #include <ringbuffer.h>
+#include <button.h>
 
 #define UART_ID uart1
 #define MIDI_BAUD_RATE 31250
 #define GP_MIDI_IN 9
 #define GP_MIDI_OUT 8
+#define GP_BTN_OCTAVE_UP 4
+#define GP_BTN_OCTAVE_DOWN 5
+
 #define MIDI_BUFFER_SIZE 32
+#define NOTES_ON_BUFFER_SIZE 128
 
 // High byte of status messages
 #define NOTE_OFF            0x80
@@ -28,14 +33,24 @@
 #define PITCH_BEND          0xe0
 #define SYSEX               0xf0
 
-int transpose_by = -12;
-RingBuffer midi_buffer;
-uint8_t m_buffer_var[MIDI_BUFFER_SIZE];
+// Octave
+#define MAX_OCTAVES_UP 3
+#define MAX_OCTAVES_DOWN 3
 
 /**
  * MIDI processor
 */
+int transpose_by = 0;
+RingBuffer midi_buffer;
+uint8_t buffer_var[MIDI_BUFFER_SIZE];
+bool notes_on[NOTES_ON_BUFFER_SIZE];
+
 void process_midi(uint8_t status, uint8_t data1, uint8_t data2) {
+
+    printf("Status: %d\n", status);
+    printf("Data1: %d\n", data1);
+    printf("Data2: %d\n", data2);
+
     // Transpose notes if needed
     if (transpose_by != 0) {
         // Check if status byte represents a NOTE ON or NOTE OFF message
@@ -45,6 +60,15 @@ void process_midi(uint8_t status, uint8_t data1, uint8_t data2) {
                 data1 += transpose_by;
             }
         }
+    }
+
+    // Maintain played note buffer to be able to clear it on octave switch
+    if ((status & 0xF0) == NOTE_ON && data2 > 0) {
+        notes_on[data1] = true;
+    }
+
+    if (((status & 0xF0) == NOTE_ON && data2 == 0) || (status & 0xF0) == NOTE_OFF) {
+        notes_on[data1] = false;
     }
 
     // Transmit MIDI data
@@ -112,6 +136,36 @@ void parse_midi(uint8_t byte) {
 }
 
 /**
+ * Handling octave buttons
+*/
+Button btn_octave_up = Button(GP_BTN_OCTAVE_UP);
+Button btn_octave_down = Button(GP_BTN_OCTAVE_DOWN);
+
+void transpose(bool up) {
+    if (up) {
+        if (transpose_by + 12 < 12 * MAX_OCTAVES_UP) {
+            transpose_by += 12;
+        }
+    } else {
+        if (transpose_by - 12 > -1 * 12 * MAX_OCTAVES_DOWN) {
+            transpose_by -= 12;
+        }
+    }
+
+    // Send a note off message for all notes. Paraszt™
+    if (uart_is_writable(UART_ID)) {
+        for (uint8_t i = 0; i < 128; i++) {
+            if (notes_on[i]) {
+                uart_putc(UART_ID, 0b10010000);
+                uart_putc(UART_ID, i);
+                uart_putc(UART_ID, 0);
+            }
+        }
+    }
+
+}
+
+/**
  * Main loop
 */
 int main() {
@@ -124,7 +178,15 @@ int main() {
     gpio_set_function(GP_MIDI_OUT, GPIO_FUNC_UART);
 
     // Init buffer
-    midi_buffer.init(m_buffer_var, MIDI_BUFFER_SIZE);
+    midi_buffer.init(buffer_var, MIDI_BUFFER_SIZE);
+
+    // Init octave buttons
+    btn_octave_up.init_gpio();
+    btn_octave_down.init_gpio();
+
+    for (int i = 0; i < NOTES_ON_BUFFER_SIZE; i++) {
+        notes_on[i] = false;
+    }
 
     while (true) {
         if (uart_is_readable(UART_ID)) {
@@ -137,6 +199,15 @@ int main() {
                 midi_buffer.read_byte(byte);
                 parse_midi(byte);
             }
+        }
+
+        // Handle octave buttons
+        if (btn_octave_up.is_released()) {
+            transpose(true);
+        }
+
+        if (btn_octave_down.is_released()) {
+            transpose(false);
         }
     }
 
