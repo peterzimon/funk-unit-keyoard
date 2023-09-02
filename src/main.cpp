@@ -24,6 +24,8 @@
 #define MIDI_BUFFER_SIZE 128
 #define NOTES_ON_BUFFER_SIZE 128
 
+#define GP_STATUS_LED 16
+
 // High byte of status messages
 #define NOTE_OFF            0x80
 #define NOTE_ON             0x90
@@ -46,6 +48,9 @@
                                 // of the pico is _very_ inaccurate so if the
                                 // actual value gets in the bounds of this
                                 // treshold value then it resets to 8192.
+
+// Chordifier
+#define BLINK_TIME_MS 350
 
 /**
  * MIDI processor
@@ -201,6 +206,9 @@ void set_pitch(uint16_t pitch) {
  * Main loop
 */
 int last_pitch_value = 0;
+bool blinking = true;
+bool led_on = false;
+uint32_t millis = Utils::millis();
 
 int main() {
     // Use for debugging
@@ -226,6 +234,10 @@ int main() {
     adc_init();
     adc_gpio_init(GP_PITCH);
     adc_select_input(0);
+
+    // Init status LED
+    gpio_init(GP_STATUS_LED);
+    gpio_set_dir(GP_STATUS_LED, GPIO_OUT);
 
     while (true) {
         if (uart_is_readable(UART_ID)) {
@@ -256,6 +268,19 @@ int main() {
             last_pitch_value = pot_value_lores;
             uint16_t pitch = Utils::map(pot_value, 0, 4096, 0, 16383);
             set_pitch(pitch);
+        }
+
+        if (blinking) {
+            if (Utils::millis() - millis > BLINK_TIME_MS) {
+                led_on = !led_on;
+                gpio_put(GP_STATUS_LED, led_on);
+                millis = Utils::millis();
+            }
+        } else {
+            if (!led_on) {
+                gpio_put(GP_STATUS_LED, 1);
+                led_on = true;
+            }
         }
     }
 
